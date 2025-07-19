@@ -1,0 +1,6 @@
+nasm -f bin boot.asm -o boot.bin
+nasm -f bin kernel.asm -o kernel.bin
+cmd /c "copy /b boot.bin + kernel.bin os-image.bin"
+& "C:\Program Files\qemu\qemu-system-i386.exe" -fda os-image.bin
+
+
