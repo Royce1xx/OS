@@ -104,7 +104,13 @@ keyboard_handler:
     test al, 0x80
     jnz .done           ; Ignore key releases
     
-    ; Convert scan code to ASCII
+    ; Handle special keys
+    cmp al, 0x0E        ; Backspace scan code
+    je .backspace
+    cmp al, 0x1C        ; Enter scan code
+    je .enter
+    
+    ; Convert scan code to ASCII for regular keys
     movzx ebx, al       ; Zero-extend scan code to ebx
     cmp bl, 58          ; Check if scan code is in our table
     jge .done           ; Skip if outside range
@@ -120,7 +126,38 @@ keyboard_handler:
     
     ; Update cursor position
     add dword [cursor_pos], 2
+    jmp .done
     
+.backspace:
+    ; Move cursor back and clear character
+    mov edi, [cursor_pos]
+    cmp edi, 0xB8000 + (80*6*2)  ; Don't go before start of line
+    jle .done
+    sub edi, 2                    ; Move back one character
+    mov [cursor_pos], edi
+    mov ax, 0x0F20               ; Space with white attribute
+    stosw                        ; Clear the character
+    sub dword [cursor_pos], 2    ; Adjust cursor back again
+    jmp .done
+    
+.enter:
+    ; Move to next line
+    mov edi, [cursor_pos]
+    ; Calculate current row
+    sub edi, 0xB8000
+    shr edi, 1          ; Divide by 2 (each char is 2 bytes)
+    mov eax, edi
+    mov ebx, 80
+    xor edx, edx
+    div ebx             ; eax = row, edx = column
+    inc eax             ; Next row
+    mov ebx, 80
+    mul ebx             ; eax = row * 80
+    shl eax, 1          ; Multiply by 2 (each char is 2 bytes)
+    add eax, 0xB8000    ; Add video memory base
+    mov [cursor_pos], eax
+    jmp .done
+
 .done:
     ; Send End of Interrupt to PIC
     mov al, 0x20
