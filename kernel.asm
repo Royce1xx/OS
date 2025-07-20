@@ -26,7 +26,7 @@ start:
     mov ah, 0x0E           ; Yellow on black
     call print_string
     
-    ; NEW: Set up interrupts
+    ; Set up interrupts
     call setup_idt
     call setup_pic
     sti                    ; Enable interrupts
@@ -102,13 +102,19 @@ keyboard_handler:
     
     ; Check if it's a key release (high bit set)
     test al, 0x80
-    jnz .done           ; Ignore key releases
+    jnz .key_release
     
-    ; Handle special keys
+    ; Handle special keys (key press)
     cmp al, 0x0E        ; Backspace scan code
     je .backspace
     cmp al, 0x1C        ; Enter scan code
     je .enter
+    cmp al, 0x2A        ; Left Shift press
+    je .shift_press
+    cmp al, 0x36        ; Right Shift press
+    je .shift_press
+    cmp al, 0x3A        ; Caps Lock press
+    je .caps_lock_toggle
     
     ; Convert scan code to ASCII for regular keys
     movzx ebx, al       ; Zero-extend scan code to ebx
@@ -119,6 +125,51 @@ keyboard_handler:
     cmp al, 0           ; Check if valid character
     je .done            ; Skip if no character
     
+    ; Check if we need uppercase
+    call should_uppercase
+    cmp bl, 1
+    jne .display_char
+    
+    ; Convert to uppercase if it's a letter
+    cmp al, 'a'
+    jb .check_numbers
+    cmp al, 'z'
+    ja .check_numbers
+    sub al, 32          ; Convert to uppercase
+    jmp .display_char
+    
+.check_numbers:
+    ; Handle shift + number keys for symbols
+    mov bl, [shift_pressed]
+    cmp bl, 1
+    jne .display_char
+    
+    ; Convert numbers to symbols when shift is pressed
+    cmp al, '1'
+    jne .check_2
+    mov al, '!'
+    jmp .display_char
+.check_2:
+    cmp al, '2'
+    jne .check_3
+    mov al, '@'
+    jmp .display_char
+.check_3:
+    cmp al, '3'
+    jne .check_4
+    mov al, '#'
+    jmp .display_char
+.check_4:
+    cmp al, '4'
+    jne .check_5
+    mov al, '$'
+    jmp .display_char
+.check_5:
+    cmp al, '5'
+    jne .display_char
+    mov al, '%'
+    
+.display_char:
     ; Display the character
     mov edi, [cursor_pos]
     mov ah, 0x0F        ; White on black
@@ -126,6 +177,27 @@ keyboard_handler:
     
     ; Update cursor position
     add dword [cursor_pos], 2
+    jmp .done
+
+.key_release:
+    ; Handle key releases
+    and al, 0x7F        ; Remove release bit
+    cmp al, 0x2A        ; Left Shift release
+    je .shift_release
+    cmp al, 0x36        ; Right Shift release
+    je .shift_release
+    jmp .done
+
+.shift_press:
+    mov byte [shift_pressed], 1
+    jmp .done
+
+.shift_release:
+    mov byte [shift_pressed], 0
+    jmp .done
+
+.caps_lock_toggle:
+    xor byte [caps_lock_on], 1    ; Toggle caps lock
     jmp .done
     
 .backspace:
@@ -166,6 +238,13 @@ keyboard_handler:
     popad               ; Restore all registers
     iret                ; Return from interrupt
 
+; Function to determine if character should be uppercase
+; Returns: bl = 1 if uppercase, bl = 0 if lowercase
+should_uppercase:
+    mov bl, [shift_pressed]
+    xor bl, [caps_lock_on]    ; XOR: uppercase if shift XOR caps (one but not both)
+    ret
+
 ; Messages
 msg1 db "*** ROYCE'S KERNEL IS WORKING! ***", 0
 msg2 db "Built with pure NASM assembly!", 0
@@ -175,21 +254,16 @@ msg4 db "I cant belive this is working", 0
 ; Cursor position for typing
 cursor_pos dd 0xB8000 + (80*6*2)  ; Start at row 6
 
+; Keyboard state flags
+shift_pressed db 0      ; 1 if shift is currently held
+caps_lock_on db 0       ; 1 if caps lock is active
+
 ; Scan code to ASCII conversion table
 scancode_table:
     db 0,0,'1','2','3','4','5','6','7','8','9','0','-','=',0,0    ; 0x00-0x0F
     db 'q','w','e','r','t','y','u','i','o','p','[',']',0,0,'a','s' ; 0x10-0x1F
     db 'd','f','g','h','j','k','l',';',"'","`",0,'\','z','x','c','v' ; 0x20-0x2F
     db 'b','n','m',',','.','/',0,'*',0,' ',0,0,0,0,0,0             ; 0x30-0x3F
-
-; IDT Entry structure (8 bytes each)
-struc idt_entry
-    .offset_low   resw 1    ; Bits 0-15 of handler address
-    .selector     resw 1    ; Code segment selector
-    .zero         resb 1    ; Always 0
-    .type_attr    resb 1    ; Type and attributes
-    .offset_high  resw 1    ; Bits 16-31 of handler address
-endstruc
 
 ; IDT with 256 entries
 idt:
